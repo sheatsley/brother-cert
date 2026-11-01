@@ -3,6 +3,9 @@ package printer
 import (
 	"errors"
 	"fmt"
+	"html"
+	"net/url"
+	"regexp"
 	"slices"
 )
 
@@ -10,6 +13,28 @@ const urlCertImport = "/net/security/certificate/import.html"
 
 // importFormID is the id of the form on the certificate import page
 const importFormID = "cert_import"
+
+// importLinkRegex finds the certificate list's link to the import page,
+// e.g. <a href="import.html?pageid=477" >
+var importLinkRegex = regexp.MustCompile(`<a[^>]+href="(import\.html[^"]*)"`)
+
+// certListLink returns the certificate list's link matching the regex (its
+// first capture), resolved against the list page; if the list has none, the
+// fallback path
+func (p *printer) certListLink(link *regexp.Regexp, fallback string) (*url.URL, error) {
+	listURL, err := p.pageURL(urlCertList)
+	if err != nil {
+		return nil, err
+	}
+	body, err := p.getPage(listURL)
+	if err != nil {
+		return nil, err
+	}
+	if caps := link.FindSubmatch(body); len(caps) == 2 {
+		return listURL.Parse(html.UnescapeString(string(caps[1])))
+	}
+	return p.pageURL(fallback)
+}
 
 // UploadNewCert converts the specified pem files into p12 format and installs them
 // on the printer. It returns the id value of the newly installed cert.
@@ -26,8 +51,9 @@ func (p *printer) UploadNewCert(keyPem, certPem []byte) (string, error) {
 		return "", err
 	}
 
-	// GET the import page and read its form
-	u, err := p.pageURL(urlCertImport)
+	// GET the import page (through the certificate list's link to it, as a
+	// browser does) and read its form
+	u, err := p.certListLink(importLinkRegex, urlCertImport)
 	if err != nil {
 		return "", err
 	}
@@ -55,7 +81,7 @@ func (p *printer) UploadNewCert(keyPem, certPem []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	bodyBytes, err = p.postMultipart(actionURL, form, form.fileInputs[0], "certkey.p12", p12)
+	bodyBytes, err = p.postMultipart(actionURL, u, form, form.fileInputs[0], "certkey.p12", p12)
 	if err != nil {
 		return "", fmt.Errorf("printer: post of new certificate failed (%w)", err)
 	}

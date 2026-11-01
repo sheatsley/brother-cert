@@ -33,8 +33,8 @@ var (
 	// e.g. var argUrl='/net/security/certificate/certificate.html';
 	waitArgURLRegex = regexp.MustCompile(`argUrl\s*=\s*'([^']+)'`)
 
-	// e.g. <p class="errorMessage">...</p>
-	pageMessageRegex = regexp.MustCompile(`(?is)<p\b[^>]*class="[^"]*Message[^"]*"[^>]*>(.*?)</p>`)
+	// e.g. <p class="errorMessage">...</p>, <div class="postError">...</div>
+	pageMessageRegex = regexp.MustCompile(`(?is)<(?:p|div)\b[^>]*class="(?:[^"]*Message[^"]*|postError[^"]*)"[^>]*>(.*?)</(?:p|div)>`)
 	breakRegex       = regexp.MustCompile(`(?i)<br\b[^>]*>`)
 	tagRegex         = regexp.MustCompile(`(?s)<[^>]*>`)
 )
@@ -263,24 +263,25 @@ func (p *printer) getPage(u *url.URL) ([]byte, error) {
 	return body, nil
 }
 
-// postForm submits url-encoded values and returns the response body; anything
-// but 200 OK is an error
-func (p *printer) postForm(u *url.URL, values url.Values) ([]byte, error) {
+// postForm submits url-encoded values, as the form on the page at referer
+// would, and returns the response body; anything but 200 OK is an error
+func (p *printer) postForm(u, referer *url.URL, values url.Values) ([]byte, error) {
 	req, err := http.NewRequest(http.MethodPost, u.String(), strings.NewReader(values.Encode()))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	return p.doPost(req)
+	return p.doPost(req, referer)
 }
 
 // p12ContentType is the type browsers give a .p12 file in an upload
 const p12ContentType = "application/x-pkcs12"
 
-// postMultipart submits a form as multipart/form-data, in page order like a
-// browser (the printer depends on it), with the file attached in the place
-// of the named file input, and returns the response body
-func (p *printer) postMultipart(u *url.URL, f *htmlForm, fileField, fileName string, file []byte) ([]byte, error) {
+// postMultipart submits a form as multipart/form-data, as the form on the
+// page at referer would: in page order like a browser (the printer depends
+// on it), with the file attached in the place of the named file input. It
+// returns the response body
+func (p *printer) postMultipart(u, referer *url.URL, f *htmlForm, fileField, fileName string, file []byte) ([]byte, error) {
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 	attached := false
@@ -324,12 +325,12 @@ func (p *printer) postMultipart(u *url.URL, f *htmlForm, fileField, fileName str
 		return nil, err
 	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
-	return p.doPost(req)
+	return p.doPost(req, referer)
 }
 
 // pageMessages returns the text of a page's notes and errors (its
-// <p class="...Message"> paragraphs), to report why the printer refused
-// something
+// <p class="...Message"> paragraphs and <div class="postError..."> boxes),
+// to report why the printer refused something
 func pageMessages(body []byte) string {
 	var msgs []string
 	for _, caps := range pageMessageRegex.FindAllSubmatch(body, -1) {
@@ -343,9 +344,22 @@ func pageMessages(body []byte) string {
 	return strings.Join(msgs, " / ")
 }
 
-// doPost sends a POST and returns the response body; anything but 200 OK is
-// an error
-func (p *printer) doPost(req *http.Request) ([]byte, error) {
+// setBrowserHeaders adds the headers a browser sends with a form: the page
+// the form came from (Referer) and its origin (Origin). The MFC-L2900DW
+// refuses a form submitted without them ("Submit Error: Your request was
+// rejected"), and doesn't advance its "Please wait" pages
+func setBrowserHeaders(req *http.Request, referer *url.URL) {
+	if referer == nil {
+		return
+	}
+	req.Header.Set("Referer", referer.String())
+	req.Header.Set("Origin", referer.Scheme+"://"+referer.Host)
+}
+
+// doPost sends a POST, as the form on the page at referer would, and returns
+// the response body; anything but 200 OK is an error
+func (p *printer) doPost(req *http.Request, referer *url.URL) ([]byte, error) {
+	setBrowserHeaders(req, referer)
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -364,7 +378,8 @@ func (p *printer) doPost(req *http.Request) ([]byte, error) {
 // followWaitPages does what the printer's "Please wait" pages do in a
 // browser: while the page has the wait form, wait a few seconds and submit
 // it again, to the URL the page names (argUrl) or else back to the page it
-// came from. It returns the first page that isn't a wait page
+// came from (from, which is also each submission's Referer). It returns the
+// first page that isn't a wait page
 func (p *printer) followWaitPages(body []byte, from *url.URL) ([]byte, error) {
 	for range maxWaitPages {
 		f, err := parseForm(body, waitFormID, "")
@@ -381,7 +396,7 @@ func (p *printer) followWaitPages(body []byte, from *url.URL) ([]byte, error) {
 		}
 
 		time.Sleep(waitInterval)
-		if body, err = p.postForm(target, f.values()); err != nil {
+		if body, err = p.postForm(target, from, f.values()); err != nil {
 			return nil, err
 		}
 		from = target

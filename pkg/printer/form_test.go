@@ -86,7 +86,9 @@ func TestPostMultipartOrder(t *testing.T) {
 	var parts []string
 	var fileType string
 	var file []byte
+	var referer, origin string
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		referer, origin = r.Header.Get("Referer"), r.Header.Get("Origin")
 		mr, err := r.MultipartReader()
 		if err != nil {
 			t.Error(err)
@@ -119,7 +121,7 @@ func TestPostMultipartOrder(t *testing.T) {
 
 	p := &printer{httpClient: server.Client(), baseUrl: server.URL}
 	u, _ := url.Parse(server.URL + "/net/security/certificate/import.html")
-	if _, err = p.postMultipart(u, f, "Bfb6", "certkey.p12", []byte("p12")); err != nil {
+	if _, err = p.postMultipart(u, u, f, "Bfb6", "certkey.p12", []byte("p12")); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"pageid", "CSRFToken", "B10cc", "B10da", "hidden_certificate_process_control", "Bfb6", "Bfb7", "hidden_cert_import_password"}
@@ -128,6 +130,9 @@ func TestPostMultipartOrder(t *testing.T) {
 	}
 	if fileType != p12ContentType || string(file) != "p12" {
 		t.Errorf("file part %q %q", fileType, file)
+	}
+	if referer != u.String() || origin != server.URL {
+		t.Errorf("Referer %q Origin %q, want %q %q", referer, origin, u.String(), server.URL)
 	}
 }
 
@@ -138,13 +143,19 @@ could not be <b>imported</b>.</p><p class="other">x</p><p class="noteMessage">Tr
 	if got := pageMessages([]byte(page)); got != "The certificate could not be imported. / Try again." {
 		t.Errorf("got %q", got)
 	}
+
+	// the MFC-L2900DW's refusal of a form submitted without Referer
+	refused := `<div class="postError">Submit&#32;Error</div><div class="postErrorSub">Your&#32;request&#32;was&#32;rejected.&#32;Please&#32;try&#32;again.</div><div class="contentsGroup">x</div>`
+	if got := pageMessages([]byte(refused)); got != "Submit Error / Your request was rejected. Please try again." {
+		t.Errorf("got %q", got)
+	}
 }
 
 // TestFollowWaitPages checks the "Please wait" pages are submitted again, to
 // the page they came from and then to their argUrl, until the work is done
 func TestFollowWaitPages(t *testing.T) {
 	waitInterval = time.Millisecond
-	var posted []string
+	var posted, referers []string
 	wait := func(script string) string {
 		return `<form method="post" action="/net/security/certificate/certificate_wait.html" id="cert_wait">` +
 			`<input type="hidden" name="hidden_certificate_process_control" value="2" /></form>` +
@@ -154,11 +165,13 @@ func TestFollowWaitPages(t *testing.T) {
 	mux.HandleFunc("/net/security/certificate/import.html", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		posted = append(posted, r.URL.Path+" "+r.PostForm.Encode())
+		referers = append(referers, r.Header.Get("Referer"))
 		_, _ = w.Write([]byte(wait(`var argInterval='3';var argUrl='/net/security/certificate/certificate.html';cert_wait_setjumppage_timer( argInterval, argUrl );`)))
 	})
 	mux.HandleFunc("/net/security/certificate/certificate.html", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		posted = append(posted, r.URL.Path+" "+r.PostForm.Encode())
+		referers = append(referers, r.Header.Get("Referer"))
 		_, _ = w.Write([]byte(`<p>done</p>`))
 	})
 	server := httptest.NewTLSServer(mux)
@@ -183,5 +196,11 @@ func TestFollowWaitPages(t *testing.T) {
 	}
 	if !reflect.DeepEqual(posted, want) {
 		t.Errorf("posted\n got  %v\n want %v", posted, want)
+	}
+
+	// each submission's Referer is the page its wait form came from
+	wantReferers := []string{from.String(), from.String()}
+	if !reflect.DeepEqual(referers, wantReferers) {
+		t.Errorf("referers\n got  %v\n want %v", referers, wantReferers)
 	}
 }

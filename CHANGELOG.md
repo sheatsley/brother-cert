@@ -1,5 +1,13 @@
 # Brother Cert Changelog
 
+## [v0.4.2] - 2026-11-01
+
+Send the Referer and Origin headers a browser sends with every form, and
+open the import page through the certificate list's link: the MFC-L2900DW
+refuses forms without them ("Submit Error"). The printer's "Submit Error"
+notice is now reported when an import fails.
+
+
 ## [v0.4.1] - 2026-11-01
 
 Send the certificate upload's parts in page order, as a browser does: the

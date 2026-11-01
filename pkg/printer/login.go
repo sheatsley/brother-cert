@@ -159,6 +159,7 @@ func (p *printer) login(password string) error {
 	}
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	setBrowserHeaders(req, pageURL)
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {

@@ -95,7 +95,7 @@ func (p *printer) SetActiveCert(id string) error {
 	if err != nil {
 		return err
 	}
-	bodyBytes, err = p.postForm(actionURL, form.values())
+	bodyBytes, err = p.postForm(actionURL, u, form.values())
 	if err != nil {
 		return fmt.Errorf("printer: failed to post set active cert form (%w)", err)
 	}
@@ -113,7 +113,7 @@ func (p *printer) SetActiveCert(id string) error {
 	}
 
 	// the printer restarts; it may drop the connection instead of answering
-	if _, err = p.postForm(confirmURL, confirm.values()); err != nil && !isConnectionDropped(err) {
+	if _, err = p.postForm(confirmURL, actionURL, confirm.values()); err != nil && !isConnectionDropped(err) {
 		return fmt.Errorf("printer: failed to post restart confirmation (%w)", err)
 	}
 

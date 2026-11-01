@@ -56,7 +56,7 @@ func (p *printer) DeleteCert(id string) error {
 	if err != nil {
 		return err
 	}
-	bodyBytes, err = p.postForm(actionURL, form.values())
+	bodyBytes, err = p.postForm(actionURL, u, form.values())
 	if err != nil {
 		return fmt.Errorf("printer: delete: %w", err)
 	}
