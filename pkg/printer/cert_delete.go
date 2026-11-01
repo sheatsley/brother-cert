@@ -3,15 +3,14 @@ package printer
 import (
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"net/url"
 	"slices"
-	"strings"
-	"time"
 )
 
 const urlCertDelete = "/net/security/certificate/delete.html"
+
+// deleteFormID is the id of the form on the certificate delete page
+const deleteFormID = "cert_delete"
 
 var errCertDeleteInvalidID = errors.New("printer: cant delete cert (invalid id)")
 
@@ -33,134 +32,39 @@ func (p *printer) DeleteCert(id string) error {
 		return errCertDeleteInvalidID
 	}
 
-	// first get the delete page to get CSRFToken
-	// get url & set path
-	u, err := url.ParseRequestURI(p.baseUrl)
+	// GET the delete page for this certificate and read its form
+	u, err := p.pageURL(urlCertDelete + "?idx=" + url.QueryEscape(id))
 	if err != nil {
 		return err
 	}
-	u.Path = urlCertDelete
+	bodyBytes, err := p.getPage(u)
+	if err != nil {
+		return fmt.Errorf("printer: get of delete page failed (%w)", err)
+	}
+	form, err := parseForm(bodyBytes, deleteFormID, "")
+	if err != nil {
+		return fmt.Errorf("printer: delete: %w", err)
+	}
 
-	// make and do request
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	// it must be the form for this certificate
+	if formID, _ := form.get("hidden_certificate_idx"); formID != id {
+		return fmt.Errorf("printer: delete: the delete page is for certificate %q, not %q", formID, id)
+	}
+
+	// submit it (the page's Submit button does nothing else)
+	actionURL, err := form.actionURL(u)
 	if err != nil {
 		return err
 	}
-
-	// req query
-	query := req.URL.Query()
-	query.Set("idx", id)
-	req.URL.RawQuery = query.Encode()
-
-	resp, err := p.httpClient.Do(req)
+	bodyBytes, err = p.postForm(actionURL, form.values())
 	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	// read body of response
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
+		return fmt.Errorf("printer: delete: %w", err)
 	}
 
-	// OK status?
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("printer: get of delete page failed (status code %d)", resp.StatusCode)
+	// the printer answers with "Please wait" pages until the delete is done
+	if _, err = p.followWaitPages(bodyBytes, actionURL); err != nil {
+		return fmt.Errorf("printer: delete: %w", err)
 	}
-
-	// find CSRFToken
-	csrfToken, err := parseBodyForCSRFToken(bodyBytes)
-	if err != nil {
-		return err
-	}
-
-	// first delete form
-	// form values
-	data := url.Values{}
-	data.Set("pageid", "383")
-	data.Set("CSRFToken", csrfToken)
-	data.Set("B8ea", "")
-	data.Set("B8fc", "")
-	data.Set("hidden_certificate_process_control", "1")
-	data.Set("hidden_certificate_idx", id)
-
-	// get url & set path
-	u, err = url.ParseRequestURI(p.baseUrl)
-	if err != nil {
-		return err
-	}
-	u.Path = urlCertDelete
-
-	// make and do request
-	req, err = http.NewRequest(http.MethodPost, u.String(), strings.NewReader(data.Encode()))
-	if err != nil {
-		return err
-	}
-
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err = p.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	// read body of response
-	bodyBytes, err = io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-
-	// OK status?
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("printer: get failed (status code %d)", resp.StatusCode)
-	}
-
-	// find CSRFToken
-	csrfToken, err = parseBodyForCSRFToken(bodyBytes)
-	if err != nil {
-		return err
-	}
-
-	// second delete (confirmation) form
-	// form values
-	data = url.Values{}
-	data.Set("pageid", "383")
-	data.Set("CSRFToken", csrfToken)
-	data.Set("B8ea", "")
-	data.Set("B8eb", "")
-	data.Set("hidden_certificate_process_control", "2")
-	data.Set("hidden_certificate_idx", id)
-
-	// get url & set path
-	u, err = url.ParseRequestURI(p.baseUrl)
-	if err != nil {
-		return err
-	}
-	u.Path = urlCertDelete
-
-	// make and do request
-	req, err = http.NewRequest(http.MethodPost, u.String(), strings.NewReader(data.Encode()))
-	if err != nil {
-		return err
-	}
-
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err = p.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	// read and discard entire body
-	_, _ = io.Copy(io.Discard, resp.Body)
-
-	// normally the webUI would show a waiting screen for ~7 seconds. insert
-	// a delay here to account for any processing the device might do
-	// before next steps
-	time.Sleep(10 * time.Second)
 
 	// check id list and ensure its gone
 	existingIDs, err = p.getCertIDs()

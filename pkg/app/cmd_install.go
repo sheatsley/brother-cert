@@ -13,6 +13,13 @@ import (
 	"github.com/gregtwallace/brother-cert/pkg/printer"
 )
 
+// reconnectAttempts and reconnectDelay are how often, and how far apart, the
+// login is retried after the printer restarts
+const (
+	reconnectAttempts = 8
+	reconnectDelay    = 15 * time.Second
+)
+
 // cmdInstallCertAndReset executes a series of commands against a brother printer
 // to install the specified ssl key and cert. it then deletes the old cert and
 // resets the printer so it will load the newly installed key/cert
@@ -124,12 +131,30 @@ func (app *app) cmdInstallCertAndReset(_ context.Context, args []string) error {
 		// use https now (even if user originally said not to, since cert is installed)
 		printerCfg.UseHttp = false
 
-		// must login again due to the restart
-		print, err = printer.NewPrinter(printerCfg)
-		if err != nil {
-			return errors.New("main: failed to reconnect to printer")
+		// must login again due to the restart (the printer may take a while
+		// longer to answer)
+		for attempt := 1; ; attempt++ {
+			print, err = printer.NewPrinter(printerCfg)
+			if err == nil {
+				break
+			}
+			if attempt == reconnectAttempts {
+				return fmt.Errorf("main: failed to reconnect to printer (%w)", err)
+			}
+			app.stdLogger.Printf("main: printer not back yet (%s), retrying in %s", err, reconnectDelay)
+			time.Sleep(reconnectDelay)
 		}
 		app.stdLogger.Println("main: reconnected to printer")
+
+		// only delete the old cert once the new one is in use, so a failed
+		// switch never leaves the printer without its working cert
+		activeId, _, err := print.GetCurrentCertID()
+		if err != nil {
+			return fmt.Errorf("main: failed to check the active cert after restart, not deleting the old one (%w)", err)
+		}
+		if activeId != newCertId {
+			return fmt.Errorf("main: after restart the active cert is %s, not the new %s; not deleting the old one", activeId, newCertId)
+		}
 
 		// do delete of old cert
 		app.stdLogger.Printf("main: deleting old cert (id: %s) ...", oldCertId)

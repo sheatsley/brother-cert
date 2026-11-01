@@ -1,5 +1,12 @@
 # Brother Cert Changelog
 
+## [v0.4.0] - 2026-11-01
+
+Support for the MFC-L2900DW (firmware Main 1.08, Sub1 1.11): forms are
+read from the printer's pages instead of hard-coded, and the old
+certificate is deleted only once the new one is in use.
+
+
 ## [v0.3.2] - 2026-05-21
 
 Add `--insecure` flag to disable https certificate checks. This should

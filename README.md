@@ -1,17 +1,17 @@
-# Brother Cert MFC-L2710DW
+# Brother Cert MFC-L2900DW
 
 Brother Cert is a command line tool to automatically install an ssl certificate on a Brother 
-MFC-L2710DW printer.
+MFC-L2900DW printer.
+
+This is a fork of [gregtwallace/brother-cert](https://github.com/gregtwallace/brother-cert), which was
+written for the MFC-L2710DW, adapted to the MFC-L2900DW's web interface. For an MFC-L2710DW, use the
+original.
 
 ## Compatibility Notice
 
-**PRs and Issues for anything other than bug fixes, will likely be ignored.**
-
-This tool is not actively updated for additional printer models and should be forked and modified if you're
-trying to use it for a different model. Requests for additional support will likely be ignored.
-
-The tool was built specifically for the Brother MFC-L2710DW printer. It 
-seems reasonable other Brother printers probably use similar mechanisms but your mileage may vary.
+This fork is maintained for one printer: the Brother MFC-L2900DW, tested with firmware Main 1.08 and
+Sub1 1.11. Other Brother printers, and other firmware versions, may lay out their web interface
+differently; your mileage may vary.
 
 It may be easiest to manually perform the initial configuration of SSL on the printer before attempting
 to use this tool for subsequent updates. However, this is not required. The only required manual step
@@ -26,6 +26,9 @@ The tool will:
 4. Activate https using the new certificate,
 5. Restart the printer, and
 6. Delete the previously active certificate.
+
+Only the certificate changes: the printer's other HTTP Server Settings (such as which protocols
+may use plain HTTP) are left as they are.
 
 Run the tool as:
 
@@ -89,7 +92,7 @@ install binary, with environment variables, to directly upload new
 certificates as they're issued by Cert Warden, without having to write a 
 separate script.
 
-![Cert Warden with Brother Cert](https://raw.githubusercontent.com/gregtwallace/brother-cert/master/img/brother-cert.png)
+![Cert Warden with Brother Cert](img/brother-cert.png)
 
 ## Building
 
