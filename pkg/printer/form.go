@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"regexp"
 	"sort"
@@ -31,6 +32,11 @@ var (
 
 	// e.g. var argUrl='/net/security/certificate/certificate.html';
 	waitArgURLRegex = regexp.MustCompile(`argUrl\s*=\s*'([^']+)'`)
+
+	// e.g. <p class="errorMessage">...</p>
+	pageMessageRegex = regexp.MustCompile(`(?is)<p\b[^>]*class="[^"]*Message[^"]*"[^>]*>(.*?)</p>`)
+	breakRegex       = regexp.MustCompile(`(?i)<br\b[^>]*>`)
+	tagRegex         = regexp.MustCompile(`(?s)<[^>]*>`)
 )
 
 // waitFormID is the id of the form on the printer's "Please wait" pages,
@@ -46,10 +52,13 @@ var waitInterval = 3 * time.Second
 // maxWaitPages is how many "Please wait" pages are followed before giving up
 const maxWaitPages = 20
 
-// formField is one named value a form submits
+// formField is one named value a form submits. A file input is kept in
+// its place among the fields (isFile), because the printer reads a
+// multipart upload's parts in page order
 type formField struct {
-	name  string
-	value string
+	name   string
+	value  string
+	isFile bool
 }
 
 // htmlForm is a form read from a page: where it posts to, and the fields a
@@ -126,7 +135,7 @@ func parseForm(body []byte, id, actionSuffix string) (*htmlForm, error) {
 				continue
 			case "file":
 				f.fileInputs = append(f.fileInputs, name)
-				continue
+				found = append(found, positioned{loc[0], formField{name: name, isFile: true}})
 			case "checkbox", "radio":
 				if !has(attrText, "checked") {
 					continue
@@ -135,12 +144,12 @@ func parseForm(body []byte, id, actionSuffix string) (*htmlForm, error) {
 				if !ok {
 					value = "on"
 				}
-				found = append(found, positioned{loc[0], formField{name, value}})
+				found = append(found, positioned{loc[0], formField{name: name, value: value}})
 			default:
 				if kind == "password" {
 					f.passwordInputs = append(f.passwordInputs, name)
 				}
-				found = append(found, positioned{loc[0], formField{name, a["value"]}})
+				found = append(found, positioned{loc[0], formField{name: name, value: a["value"]}})
 			}
 		}
 
@@ -165,7 +174,7 @@ func parseForm(body []byte, id, actionSuffix string) (*htmlForm, error) {
 					break
 				}
 			}
-			found = append(found, positioned{loc[0], formField{name, value}})
+			found = append(found, positioned{loc[0], formField{name: name, value: value}})
 		}
 
 		sort.SliceStable(found, func(i, j int) bool { return found[i].pos < found[j].pos })
@@ -189,7 +198,7 @@ func (f *htmlForm) set(name, value string) {
 			return
 		}
 	}
-	f.fields = append(f.fields, formField{name, value})
+	f.fields = append(f.fields, formField{name: name, value: value})
 }
 
 // get returns a field's value, and whether the form submits it
@@ -202,11 +211,14 @@ func (f *htmlForm) get(name string) (string, bool) {
 	return "", false
 }
 
-// values returns the fields as url.Values
+// values returns the fields as url.Values (file inputs, which only a
+// multipart upload can carry, are left out)
 func (f *htmlForm) values() url.Values {
 	v := url.Values{}
 	for _, field := range f.fields {
-		v.Add(field.name, field.value)
+		if !field.isFile {
+			v.Add(field.name, field.value)
+		}
 	}
 	return v
 }
@@ -262,24 +274,48 @@ func (p *printer) postForm(u *url.URL, values url.Values) ([]byte, error) {
 	return p.doPost(req)
 }
 
-// postMultipart submits a form as multipart/form-data, with one file attached
-// to the named file input, and returns the response body
+// p12ContentType is the type browsers give a .p12 file in an upload
+const p12ContentType = "application/x-pkcs12"
+
+// postMultipart submits a form as multipart/form-data, in page order like a
+// browser (the printer depends on it), with the file attached in the place
+// of the named file input, and returns the response body
 func (p *printer) postMultipart(u *url.URL, f *htmlForm, fileField, fileName string, file []byte) ([]byte, error) {
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
+	attached := false
 	for _, field := range f.fields {
-		if err := w.WriteField(field.name, field.value); err != nil {
+		if !field.isFile {
+			if err := w.WriteField(field.name, field.value); err != nil {
+				return nil, fmt.Errorf("printer: failed to write form (%w)", err)
+			}
+			continue
+		}
+
+		// a file input: the file goes here, any other file input is sent empty
+		h := textproto.MIMEHeader{}
+		h.Set("Content-Disposition", fmt.Sprintf(`form-data; name=%q; filename=%q`, field.name, fileName))
+		h.Set("Content-Type", p12ContentType)
+		var content []byte
+		if field.name == fileField {
+			content = file
+			attached = true
+		} else {
+			h.Set("Content-Disposition", fmt.Sprintf(`form-data; name=%q; filename=""`, field.name))
+			h.Set("Content-Type", "application/octet-stream")
+		}
+		part, err := w.CreatePart(h)
+		if err != nil {
+			return nil, fmt.Errorf("printer: failed to write form (%w)", err)
+		}
+		if _, err = part.Write(content); err != nil {
 			return nil, fmt.Errorf("printer: failed to write form (%w)", err)
 		}
 	}
-	fw, err := w.CreateFormFile(fileField, fileName)
-	if err != nil {
-		return nil, fmt.Errorf("printer: failed to write form (%w)", err)
+	if !attached {
+		return nil, fmt.Errorf("printer: the form has no file input %q", fileField)
 	}
-	if _, err = fw.Write(file); err != nil {
-		return nil, fmt.Errorf("printer: failed to write form (%w)", err)
-	}
-	if err = w.Close(); err != nil {
+	if err := w.Close(); err != nil {
 		return nil, fmt.Errorf("printer: failed to close form (%w)", err)
 	}
 
@@ -289,6 +325,22 @@ func (p *printer) postMultipart(u *url.URL, f *htmlForm, fileField, fileName str
 	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
 	return p.doPost(req)
+}
+
+// pageMessages returns the text of a page's notes and errors (its
+// <p class="...Message"> paragraphs), to report why the printer refused
+// something
+func pageMessages(body []byte) string {
+	var msgs []string
+	for _, caps := range pageMessageRegex.FindAllSubmatch(body, -1) {
+		text := breakRegex.ReplaceAllString(string(caps[1]), " ")
+		text = tagRegex.ReplaceAllString(text, "")
+		text = strings.Join(strings.Fields(html.UnescapeString(text)), " ")
+		if text != "" {
+			msgs = append(msgs, text)
+		}
+	}
+	return strings.Join(msgs, " / ")
 }
 
 // doPost sends a POST and returns the response body; anything but 200 OK is

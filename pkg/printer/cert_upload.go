@@ -61,7 +61,8 @@ func (p *printer) UploadNewCert(keyPem, certPem []byte) (string, error) {
 	}
 
 	// the printer answers with "Please wait" pages until the import is done
-	if _, err = p.followWaitPages(bodyBytes, actionURL); err != nil {
+	finalPage, err := p.followWaitPages(bodyBytes, actionURL)
+	if err != nil {
 		return "", fmt.Errorf("printer: upload: %w", err)
 	}
 
@@ -88,7 +89,11 @@ func (p *printer) UploadNewCert(keyPem, certPem []byte) (string, error) {
 		return "", errors.New("printer: upload: failed to deduce new cert's id")
 	}
 	if countNew == 0 {
-		return "", errors.New("printer: upload: the printer did not add the certificate (is it RSA, with a Common Name?)")
+		msg := pageMessages(finalPage)
+		if msg == "" {
+			msg = "no message"
+		}
+		return "", fmt.Errorf("printer: upload: the printer did not add the certificate (it said: %s)", msg)
 	}
 
 	return newId, nil

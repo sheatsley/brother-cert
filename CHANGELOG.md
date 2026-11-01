@@ -1,5 +1,12 @@
 # Brother Cert Changelog
 
+## [v0.4.1] - 2026-11-01
+
+Send the certificate upload's parts in page order, as a browser does: the
+MFC-L2900DW silently ignores an upload whose file part comes last. When an
+import is refused, report the printer's own message.
+
+
 ## [v0.4.0] - 2026-11-01
 
 Support for the MFC-L2900DW (firmware Main 1.08, Sub1 1.11): forms are
