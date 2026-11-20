@@ -10,7 +10,7 @@ import (
 	"github.com/peterbourgon/ff/v4/ffhelp"
 )
 
-const appVersion = "0.4.2"
+const appVersion = "0.4.3"
 
 // struct for receivers to use common app pieces
 type app struct {

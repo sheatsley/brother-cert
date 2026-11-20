@@ -1,5 +1,17 @@
 # Brother Cert Changelog
 
+## [v0.4.3] - 2026-11-20
+
+Log in the way a browser does, from the printer's start page: firmware 1.10
+of the MFC-L2900DW shows its login form on /home/status.html and refuses a
+login that names /general/status.html, the page 0.4.2 started from (the
+older page is still tried when the start page has no form). Tested against
+pages captured from firmware Main 1.10, Sub1 1.11, whose CSRF tokens now
+carry line breaks; they are sent back unchanged. Adds
+`tools/capture-printer.py`, which records a redacted trace of the
+printer's certificate pages for porting to a new firmware.
+
+
 ## [v0.4.2] - 2026-11-01
 
 Send the Referer and Origin headers a browser sends with every form, and

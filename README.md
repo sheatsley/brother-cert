@@ -10,8 +10,13 @@ original.
 ## Compatibility Notice
 
 This fork is maintained for one printer: the Brother MFC-L2900DW, tested with firmware Main 1.08 and
-Sub1 1.11. Other Brother printers, and other firmware versions, may lay out their web interface
+1.10 (Sub1 1.11). Other Brother printers, and other firmware versions, may lay out their web interface
 differently; your mileage may vary.
+
+When a firmware update breaks it, `tools/capture-printer.py` records what the new firmware's
+certificate pages do: it opens Chrome on the printer, you click through the steps it prints, and it
+saves the trace with the admin password and cookies removed. That trace is what a port is built from
+(the script's header says how to install its two Python packages).
 
 It may be easiest to manually perform the initial configuration of SSL on the printer before attempting
 to use this tool for subsequent updates. However, this is not required. The only required manual step

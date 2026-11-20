@@ -93,3 +93,56 @@ func TestLoginFollowsRedirect(t *testing.T) {
 		t.Fatalf("wrong password: got %v, want %v", err, errLoginNoAuth)
 	}
 }
+
+// mfcL2900DW110LoginForm is the login form firmware 1.10 shows on
+// /home/status.html until logged in
+const mfcL2900DW110LoginForm = `<form method="post" action="/home/status.html"><div><input type="password" id="LogBox" name="B10ba" /><input type="hidden" name="loginurl" value="/home/status.html"/><input id="login" type="submit" value="Login" /></div></form>`
+
+// TestLoginFirmware110 logs in to a fake MFC-L2900DW on firmware 1.10, which
+// sends / to /home/status.html, shows the login form there, and gives no
+// cookie to a login that names the older page (/general/status.html, still
+// answered with 1.08's form) as its loginurl
+func TestLoginFirmware110(t *testing.T) {
+	var posted url.Values
+	var referer, origin string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/home/status.html", http.StatusMovedPermanently)
+	})
+	mux.HandleFunc("/general/status.html", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(mfcL2900DWLoginPage))
+	})
+	mux.HandleFunc("/home/status.html", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			_, _ = w.Write([]byte(mfcL2900DW110LoginForm))
+			return
+		}
+		_ = r.ParseForm()
+		posted = r.PostForm
+		referer, origin = r.Header.Get("Referer"), r.Header.Get("Origin")
+		if r.PostForm.Get("B10ba") == "secret" && r.PostForm.Get("loginurl") == "/home/status.html" {
+			http.SetCookie(w, &http.Cookie{Name: "AuthCookie", Value: "ok", Path: "/"})
+		}
+		http.Redirect(w, r, "/home/status.html", http.StatusMovedPermanently)
+	})
+	server := httptest.NewTLSServer(mux)
+	defer server.Close()
+
+	jar, _ := cookiejar.New(nil)
+	client := server.Client()
+	client.Jar = jar
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	p := &printer{httpClient: client, baseUrl: server.URL}
+
+	if err := p.login("secret"); err != nil {
+		t.Fatalf("login failed: %v", err)
+	}
+	if posted.Get("loginurl") != "/home/status.html" {
+		t.Fatalf("posted loginurl %q, want /home/status.html", posted.Get("loginurl"))
+	}
+	if referer != server.URL+"/home/status.html" || origin != server.URL {
+		t.Fatalf("posted with Referer %q and Origin %q, want the login page's", referer, origin)
+	}
+}

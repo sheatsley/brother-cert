@@ -10,10 +10,20 @@ import (
 	"strings"
 )
 
+// urlLoginStart is where the login starts, as in a browser: the printer
+// sends it on to the page with its login form (on the MFC-L2900DW,
+// /home/status.html, which shows the form until logged in, on firmware
+// 1.10; /etc/loginerror.html on 1.08)
+const urlLoginStart = "/"
+
+// urlLogin is the older login page, tried when the start page has no login
+// form, and the form's default action and loginurl (the MFC-L2710DW's form
+// gives neither). Firmware 1.10 refuses a login whose loginurl is this page
+// when its form names another
 const urlLogin = "/general/status.html"
 
 // maxLoginRedirects is how many redirects are followed to reach the login
-// form (the MFC-L2900DW sends /general/status.html to /etc/loginerror.html)
+// form
 const maxLoginRedirects = 5
 
 var (
@@ -129,14 +139,23 @@ func (p *printer) login(password string) error {
 	if err != nil {
 		return err
 	}
-	u.Path = urlLogin
 
-	// first, fetch the login page to discover what its form asks for
-	bodyBytes, pageURL, err := p.getLoginPage(u)
-	if err != nil {
-		return err
+	// first, fetch the login page to discover what its form asks for: where
+	// a browser starts, else the older login page
+	var form loginForm
+	var pageURL *url.URL
+	for _, path := range []string{urlLoginStart, urlLogin} {
+		u.Path = path
+		var bodyBytes []byte
+		bodyBytes, pageURL, err = p.getLoginPage(u)
+		if err != nil {
+			return err
+		}
+		form, err = parseLoginForm(bodyBytes)
+		if err == nil {
+			break
+		}
 	}
-	form, err := parseLoginForm(bodyBytes)
 	if err != nil {
 		return err
 	}
